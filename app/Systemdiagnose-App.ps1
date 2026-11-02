@@ -3102,7 +3102,7 @@ function Test-UpdateErlaubt {
 
 function Test-UpdatePfad {
     param([string] $Pfad)
-    return ($Pfad -match '^(Design\\)?[A-Za-z0-9][A-Za-z0-9 \-]{0,60}\.(ps1|psd1|cmd|md|jpg|png|txt)$')
+    return ($Pfad -match '^(Design\\)?[A-Za-z0-9][A-Za-z0-9 \-]{0,60}\.(ps1|psd1|cmd|md|jpg|png|ico|txt)$')
 }
 
 # Grund, warum dieser Ordner sich nicht selbst aktualisiert (leer = erlaubt) - für die Einstellungen
@@ -4903,8 +4903,17 @@ $Script:App.Add_DispatcherUnhandledException({
 })
 
 try {
-    $ico = [System.Drawing.Icon]::ExtractAssociatedIcon((Join-Path ([Environment]::GetFolderPath('System')) 'msinfo32.exe'))
-    $Script:Symbol = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+    # Eigenes Symbol (Design\Symbol.png, 02.11.), sonst wie früher das von msinfo32
+    $png = Join-Path $Script:Ordner 'Design\Symbol.png'
+    if (Test-Path -LiteralPath $png) {
+        # OnLoad: Datei gleich lesen und freigeben - sonst sperrt das Fenster sie und ein Update kann sie nicht ersetzen
+        $Script:Symbol = New-Object System.Windows.Media.Imaging.BitmapImage
+        $Script:Symbol.BeginInit(); $Script:Symbol.CacheOption = 'OnLoad'; $Script:Symbol.UriSource = [Uri]$png; $Script:Symbol.EndInit(); $Script:Symbol.Freeze()
+    }
+    else {
+        $ico = [System.Drawing.Icon]::ExtractAssociatedIcon((Join-Path ([Environment]::GetFolderPath('System')) 'msinfo32.exe'))
+        $Script:Symbol = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+    }
 } catch { $Script:Symbol = $null }
 
 $Script:Fenster = New-XamlObjekt $Script:FensterXaml

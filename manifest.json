@@ -1,20 +1,20 @@
 {
     "Format":  "Systemdiagnose-Update/1",
-    "Version":  "2.9.1",
-    "Datum":  "2026-11-02 03:32",
+    "Version":  "2.9.2",
+    "Datum":  "2026-11-02 03:56",
     "Neu":  [
-                "Einstellungen: Knopf „Nach Updates suchen“"
+                "Neues Programmsymbol"
             ],
     "Dateien":  [
                     {
                         "Pfad":  "Systemdiagnose.ps1",
-                        "Sha256":  "4282E86F8ED4D4D142C4613B7067C3DB6C476BB48C32089D899D1561FCDF6EA9",
+                        "Sha256":  "CDD2059C6A5117B040575F894E6F7B392AD943865425B3F0D8047CFE612C655F",
                         "Bytes":  247326
                     },
                     {
                         "Pfad":  "Systemdiagnose-App.ps1",
-                        "Sha256":  "86C95F64E738FECC5A49953F84EBEDF2925FE13C0035BC1E97BFE7773C8B7540",
-                        "Bytes":  333648
+                        "Sha256":  "FCD0FCF4CEE191F12EBDD16E7FB70525F14D27A3DCE6C4EC5B6274BCE5365463",
+                        "Bytes":  334224
                     },
                     {
                         "Pfad":  "Bereinigung.ps1",
@@ -45,6 +45,11 @@
                         "Pfad":  "Design\\CloneWars.jpg",
                         "Sha256":  "213EFF35EACD1751E0A1BE88FE94369A4BC61BE2D21C6D29DF4C905F151CD3B5",
                         "Bytes":  571274
+                    },
+                    {
+                        "Pfad":  "Design\\Symbol.png",
+                        "Sha256":  "4D58644C7AEAA8F8CEC8D458D8B4448D829D93CCCC83A201D9DFEF7CAC375B25",
+                        "Bytes":  124791
                     }
                 ]
 }

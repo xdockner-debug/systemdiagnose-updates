@@ -65,7 +65,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $WhatIfPreference = $true
 $ErrorActionPreference = 'Continue'
 
-$Script:Version       = '2.9.1 (02.11.2026)'
+$Script:Version       = '2.9.2 (02.11.2026)'
 $Script:ToolOrdner    = Split-Path -Parent $PSCommandPath
 # Datenordner (Berichte, Profile): neben den Programmdateien. Store-Fassung (MSIX): Programmordner unter WindowsApps ist
 # schreibgeschuetzt -> LocalState des Pakets; echter Pfad, damit App und erhoehte Kindprozesse dieselben Dateien sehen.
