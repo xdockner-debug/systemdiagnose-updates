@@ -1,14 +1,14 @@
 {
     "Format":  "Systemdiagnose-Update/1",
-    "Version":  "2.9.2",
-    "Datum":  "2026-11-02 03:56",
+    "Version":  "2.9.3",
+    "Datum":  "2026-11-02 04:01",
     "Neu":  [
-                "Neues Programmsymbol"
+                "Programmsymbol in Rot"
             ],
     "Dateien":  [
                     {
                         "Pfad":  "Systemdiagnose.ps1",
-                        "Sha256":  "CDD2059C6A5117B040575F894E6F7B392AD943865425B3F0D8047CFE612C655F",
+                        "Sha256":  "D50E156FC745693BC607B4E5B95C849CB7D657A966C8E1B714CEACCEBC2CD3B2",
                         "Bytes":  247326
                     },
                     {
@@ -48,8 +48,8 @@
                     },
                     {
                         "Pfad":  "Design\\Symbol.png",
-                        "Sha256":  "4D58644C7AEAA8F8CEC8D458D8B4448D829D93CCCC83A201D9DFEF7CAC375B25",
-                        "Bytes":  124791
+                        "Sha256":  "1D5A9ADE047D18F3434FEDC494E7CE8AA561CB5C40FCF504E0A0E9F0DED6EBDC",
+                        "Bytes":  115489
                     }
                 ]
 }
