@@ -2002,6 +2002,14 @@ $Script:EinstellungenXaml = @'
         </Button>
         <TextBlock x:Name="PcText" Foreground="{DynamicResource Muted}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center"/>
       </DockPanel>
+      <TextBlock Text="Updates" Style="{StaticResource AbschnittKopf}" Margin="0,22,0,6"/>
+      <DockPanel>
+        <Button x:Name="UpdateSuchen" DockPanel.Dock="Right" Style="{StaticResource Knopf}" Margin="12,0,0,0" VerticalAlignment="Center"
+                ToolTip="Sucht sonst automatisch bei jedem Start">
+          <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE72C;" FontFamily="{StaticResource Icons}" Margin="0,2,8,0"/><TextBlock x:Name="UpdateSuchenText" Text="Nach Updates suchen"/></StackPanel>
+        </Button>
+        <TextBlock x:Name="UpdateStand" Foreground="{DynamicResource Muted}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center"/>
+      </DockPanel>
       <Button x:Name="Schliessen" Style="{StaticResource PrimaerKnopf}" Content="Fertig" HorizontalAlignment="Right" Margin="0,20,0,0" MinWidth="110" IsDefault="True" IsCancel="True"/>
     </StackPanel>
   </Grid>
@@ -2936,6 +2944,28 @@ function Show-Einstellungen {
         $w = [System.Windows.Window]::GetWindow($s)
         if (Save-Profil $Script:Daten) { $w.FindName('PcText').Text = (Get-PcText) + "`nGilt ab der nächsten Prüfung." }
     })
+    # Updates: Stand + Knopf; liegt schon eins bereit, führt derselbe Knopf direkt zum Update-Dialog
+    $sperre = Get-UpdateSperre
+    $d.FindName('UpdateStand').Text = if ($Script:Update) { "Installiert: $(Get-AppVersion)  ·  Version $($Script:Update.Version) ist verfügbar." }
+        elseif ($sperre) { "Installiert: $(Get-AppVersion)  ·  $sperre" } else { "Installiert: $(Get-AppVersion)  ·  wird bei jedem Start automatisch geprüft." }
+    if ($Script:Update) { $d.FindName('UpdateSuchenText').Text = 'Jetzt aktualisieren' }
+    $d.FindName('UpdateSuchen').IsEnabled = [bool]($Script:Update -or -not $sperre)
+    $d.FindName('UpdateSuchen').Add_Click({
+        param($s, $e)
+        $w = [System.Windows.Window]::GetWindow($s)
+        if ($Script:Update) { $w.Close(); Show-Update; return }
+        $s.IsEnabled = $false
+        $w.FindName('UpdateStand').Text = 'Suche bei GitHub …'
+        Start-UpdatePruefung -Rueckmeldung {
+            param($Text)
+            if (-not $w.IsLoaded) { return }
+            $w.FindName('UpdateStand').Text = $Text
+            $knopf = $w.FindName('UpdateSuchen')
+            $knopf.IsEnabled = $true
+            # In GetNewClosure zeigt $Script: auf ein eigenes Modul - deshalb am Text erkennen, nicht an $Script:Update
+            if ($Text -like 'Version * ist verfügbar*') { $w.FindName('UpdateSuchenText').Text = 'Jetzt aktualisieren' }
+        }.GetNewClosure()
+    })
     $d.FindName('Schliessen').Add_Click({ param($s, $e) [System.Windows.Window]::GetWindow($s).Close() })
     if ($Vorschau) { return $d }
     [void]$d.ShowDialog()
@@ -3075,8 +3105,21 @@ function Test-UpdatePfad {
     return ($Pfad -match '^(Design\\)?[A-Za-z0-9][A-Za-z0-9 \-]{0,60}\.(ps1|psd1|cmd|md|jpg|png|txt)$')
 }
 
+# Grund, warum dieser Ordner sich nicht selbst aktualisiert (leer = erlaubt) - für die Einstellungen
+function Get-UpdateSperre {
+    if (-not $Script:UpdateQuelle) { return 'Keine Update-Quelle eingetragen.' }
+    if (Test-Path -LiteralPath (Join-Path $Script:Ordner '.git')) { return 'Entwicklungsfassung (Git-Ordner) - aktualisiert sich nicht selbst.' }
+    if ($Script:Ordner -match '\\WindowsApps\\') { return 'Store-Fassung - Updates kommen über den Microsoft Store.' }
+    if ($Script:NurLesen) { return 'Vorschau - keine Abfrage.' }
+    return ''
+}
+
+# -Rueckmeldung bekommt einen Satz zum Ergebnis (Einstellungen); ohne läuft die Prüfung still wie beim Start
 function Start-UpdatePruefung {
-    if (-not (Test-UpdateErlaubt)) { return }
+    param([scriptblock] $Rueckmeldung)
+    $Script:UpdateRueckmeldung = $Rueckmeldung
+    if (-not (Test-UpdateErlaubt)) { if ($Rueckmeldung) { & $Rueckmeldung (Get-UpdateSperre) } return }
+    if ($Script:UpdateUhr -and $Script:UpdateUhr.IsEnabled) { return }   # läuft schon - meldet sich an dieselbe Rückmeldung
     $ps = [PowerShell]::Create()
     [void]$ps.AddScript({
         param($Quelle)
@@ -3095,17 +3138,24 @@ function Start-UpdatePruefung {
         $s = $Script:UpdateSuche
         if (-not $s.Handle.IsCompleted -and ((Get-Date) - $s.Start).TotalSeconds -lt 20) { return }
         $Script:UpdateUhr.Stop()
+        $text = ''
         try {
-            if (-not $s.Handle.IsCompleted) { $s.Ps.Stop(); return }
+            if (-not $s.Handle.IsCompleted) { $s.Ps.Stop(); $text = 'Keine Antwort von GitHub (Internetverbindung?) - später erneut versuchen.'; return }
             $r = @($s.Ps.EndInvoke($s.Handle))[0]
-            if ($s.Ps.HadErrors -or -not $r) { return }
+            if ($s.Ps.HadErrors -or -not $r) { $text = 'Abfrage fehlgeschlagen: ' + $(if ($s.Ps.Streams.Error.Count) { $s.Ps.Streams.Error[0].Exception.Message } else { 'keine Daten' }); return }
             $u = Read-UpdateManifest $r.Manifest ([string]$r.Signatur)
-            if ($u -and [version]$u.Version -gt [version](Get-AppVersion)) {
+            if (-not $u) { $text = 'Update-Daten ungültig (Signatur oder Inhalt) - nichts geladen.'; return }
+            if ([version]$u.Version -gt [version](Get-AppVersion)) {
                 $Script:Update = $u
                 (Get-Element 'UpdateText').Text = "Update $($u.Version)"
                 (Get-Element 'UpdateKnopf').Visibility = 'Visible'
-            }
-        } catch { } finally { $s.Ps.Dispose() }
+                $text = "Version $($u.Version) ist verfügbar (vom $($u.Datum))."
+            } else { $text = "Aktuell - Version $(Get-AppVersion), geprüft um $(Get-Date -Format 'HH:mm')." }
+        } catch { $text = 'Abfrage fehlgeschlagen: ' + $_.Exception.Message }
+        finally {
+            $s.Ps.Dispose()
+            if ($Script:UpdateRueckmeldung) { try { & $Script:UpdateRueckmeldung $text } catch { } }
+        }
     })
     $Script:UpdateUhr.Start()
 }

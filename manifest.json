@@ -1,20 +1,20 @@
 {
     "Format":  "Systemdiagnose-Update/1",
-    "Version":  "2.9",
-    "Datum":  "2026-11-02 03:24",
+    "Version":  "2.9.1",
+    "Datum":  "2026-11-02 03:32",
     "Neu":  [
-                "Fehler melden: Fehlercodes als Datei für den Entwickler,Updates direkt in der App, ohne Neuinstallation,Übermittlungsoptimierung zeigt die echte Größe"
+                "Einstellungen: Knopf „Nach Updates suchen“"
             ],
     "Dateien":  [
                     {
                         "Pfad":  "Systemdiagnose.ps1",
-                        "Sha256":  "0E9B31FDDF543153CBE297E2DEEA1F380A7474CAFB88F61A9E6235F8E0A2D99C",
-                        "Bytes":  247324
+                        "Sha256":  "4282E86F8ED4D4D142C4613B7067C3DB6C476BB48C32089D899D1561FCDF6EA9",
+                        "Bytes":  247326
                     },
                     {
                         "Pfad":  "Systemdiagnose-App.ps1",
-                        "Sha256":  "163BB2D8169750F20FA2B473BDED3606C328EE3BCE837A3AADEF37C3B9DBECA9",
-                        "Bytes":  329868
+                        "Sha256":  "86C95F64E738FECC5A49953F84EBEDF2925FE13C0035BC1E97BFE7773C8B7540",
+                        "Bytes":  333648
                     },
                     {
                         "Pfad":  "Bereinigung.ps1",
