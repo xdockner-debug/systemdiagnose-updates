@@ -1,0 +1,50 @@
+{
+    "Format":  "Systemdiagnose-Update/1",
+    "Version":  "2.9",
+    "Datum":  "2026-11-02 03:24",
+    "Neu":  [
+                "Fehler melden: Fehlercodes als Datei für den Entwickler,Updates direkt in der App, ohne Neuinstallation,Übermittlungsoptimierung zeigt die echte Größe"
+            ],
+    "Dateien":  [
+                    {
+                        "Pfad":  "Systemdiagnose.ps1",
+                        "Sha256":  "0E9B31FDDF543153CBE297E2DEEA1F380A7474CAFB88F61A9E6235F8E0A2D99C",
+                        "Bytes":  247324
+                    },
+                    {
+                        "Pfad":  "Systemdiagnose-App.ps1",
+                        "Sha256":  "163BB2D8169750F20FA2B473BDED3606C328EE3BCE837A3AADEF37C3B9DBECA9",
+                        "Bytes":  329868
+                    },
+                    {
+                        "Pfad":  "Bereinigung.ps1",
+                        "Sha256":  "3E8DE1A123FF339E11A84036A033BA9CBE0DFF1DEAD934419814E6420F615669",
+                        "Bytes":  65163
+                    },
+                    {
+                        "Pfad":  "Reinigung.psd1",
+                        "Sha256":  "78D1088B0A20558A49490239B382D7A43E87F6A4266A7F02F7271030376A327B",
+                        "Bytes":  15063
+                    },
+                    {
+                        "Pfad":  "Systemdiagnose starten.cmd",
+                        "Sha256":  "F79FF293CB1CA1DBC3ACD12F0E8A41D235394E92B0878F7502906A61EAFE7D8A",
+                        "Bytes":  1947
+                    },
+                    {
+                        "Pfad":  "README.md",
+                        "Sha256":  "2A306557E4E9083AB5BADC67485940C1FF3FCB7DEB815ECA050B88519C50EC14",
+                        "Bytes":  13218
+                    },
+                    {
+                        "Pfad":  "Design\\StarWars.jpg",
+                        "Sha256":  "553D6124E041B61A6B122C14C23EC4F8EC5035CF703AB25A164EA1DB38BADE1D",
+                        "Bytes":  299138
+                    },
+                    {
+                        "Pfad":  "Design\\CloneWars.jpg",
+                        "Sha256":  "213EFF35EACD1751E0A1BE88FE94369A4BC61BE2D21C6D29DF4C905F151CD3B5",
+                        "Bytes":  571274
+                    }
+                ]
+}
