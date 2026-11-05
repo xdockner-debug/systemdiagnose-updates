@@ -6,7 +6,9 @@ Getrennt davon räumt der Reiter **„Reinigung“** Caches und Temp-Dateien auf
 
 ## Starten
 
-Desktop-Verknüpfung **„Systemdiagnose“** (startet `Systemdiagnose.vbs` → Programmfenster ohne Konsole).
+Desktop-Verknüpfung **„Systemdiagnose“** (startet `Systemdiagnose.exe` → Programmfenster ohne Konsole). Die App hat einen
+eigenen Taskleisteneintrag (lässt sich anheften), zeigt den Fortschritt einer Prüfung im Taskleistenknopf und meldet sich
+mit einer Windows-Benachrichtigung, wenn eine längere Prüfung im Hintergrund fertig ist.
 
 1. Oben den Modus wählen und **„Prüfung starten“**:
 

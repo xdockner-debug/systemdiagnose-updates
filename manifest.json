@@ -1,21 +1,24 @@
 {
     "Format":  "Systemdiagnose-Update/1",
-    "Version":  "2.9.4",
-    "Datum":  "2026-11-05 06:37",
+    "Version":  "2.9.5",
+    "Datum":  "2026-11-05 07:03",
     "Neu":  [
-                "Fehler melden: Bericht geht jetzt automatisch und verschlüsselt an den Entwickler",
-                "Ohne Internet wird er beim nächsten Start nachgeschickt"
+                "Kein Doppelstart mehr: weitere Klicks während des Admin-Starts starten keine zweite Prüfung",
+                "Prüfungen laufen mit niedrigerer Priorität - Spiele und Programme im Vordergrund gehen vor",
+                "Fenster schließen beendet eine laufende Prüfung",
+                "Scharf auf jedem Bildschirm, auch bei unterschiedlicher Skalierung",
+                "Eigener Taskleisteneintrag mit Fortschritt; Benachrichtigung, wenn eine Prüfung im Hintergrund fertig ist"
             ],
     "Dateien":  [
                     {
                         "Pfad":  "Systemdiagnose.ps1",
-                        "Sha256":  "7CE3545F4594D0BFD2BC040F68003102295B8EC19A9B883307CF9FA08E3E70E3",
+                        "Sha256":  "2B4EF853CC8999FAD7E1E3D89B8349F313BD0C8D963F8C09F8D015EA64B8562E",
                         "Bytes":  247326
                     },
                     {
                         "Pfad":  "Systemdiagnose-App.ps1",
-                        "Sha256":  "4166912A4272D264B5C878E4E4879F9ED8D1E78EDBB133A068E6E954E5426DFC",
-                        "Bytes":  342899
+                        "Sha256":  "D2A6B06A70FD2EFACA1769CCCF767102B8B47B6FC58861DD1759782E75D2D311",
+                        "Bytes":  354842
                     },
                     {
                         "Pfad":  "Bereinigung.ps1",
@@ -34,8 +37,8 @@
                     },
                     {
                         "Pfad":  "README.md",
-                        "Sha256":  "2A306557E4E9083AB5BADC67485940C1FF3FCB7DEB815ECA050B88519C50EC14",
-                        "Bytes":  13218
+                        "Sha256":  "DCC29F801C007893F53A2A6622FC1E0C7BF90CDA5F53F318E8B980277360C5B4",
+                        "Bytes":  13451
                     },
                     {
                         "Pfad":  "Design\\StarWars.jpg",

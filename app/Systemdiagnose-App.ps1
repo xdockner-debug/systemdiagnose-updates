@@ -22,6 +22,12 @@ param([string] $Vorschau)
 
 $ErrorActionPreference = 'Stop'
 
+# Pro-Monitor-DPI (siehe SdWindows): WPF skaliert beim Wechsel auf einen Bildschirm mit anderer Skalierung nur mit diesem Schalter
+# neu (fuer Programme vor .NET 4.6.2 - wie powershell.exe - standardmaessig aus). Muss gesetzt sein, bevor WPF ihn liest.
+try { [AppContext]::SetSwitch('Switch.System.Windows.DoNotScaleForDpiChanges', $false) } catch { }
+# Eigene Kennung fuer Taskleiste und Benachrichtigungen (statt "Windows PowerShell"); auch im Installer an den Verknuepfungen
+$Script:AppId = 'xdockner.Systemdiagnose'
+
 # Nur ein Fenster gleichzeitig: zwei Instanzen koennten parallel pruefen, bereinigen oder Archiv/Einstellungen schreiben.
 # Laeuft schon eins, wird es nach vorn geholt und dieses beendet sich.
 if (-not $Vorschau) {
@@ -48,6 +54,10 @@ $Script:BereinigungsOrdner = Join-Path $Script:DatenOrdner 'Bereinigung'
 $Script:Engine             = Join-Path $Script:Ordner 'Systemdiagnose.ps1'
 $Script:Bereiniger         = Join-Path $Script:Ordner 'Bereinigung.ps1'
 $Script:Lauf               = $null
+# Sperre, solange Start-Kindprozess laeuft (siehe dort) - $Script:Lauf ist dann noch nicht gesetzt
+$Script:StartLaeuft        = $false
+# Immer die PowerShell aus dem Windows-Ordner - ein Name ohne Pfad wuerde zuerst im Arbeitsordner gesucht (auch beim Admin-Start)
+$Script:PowerShellExe      = Join-Path $PSHOME 'powershell.exe'
 $Script:Daten              = $null
 $Script:ErgebnisPfad       = $null
 $Script:Liste              = $null
@@ -261,8 +271,60 @@ public static class SdFenster {
     }
     public static bool MauszeigerFreigeben() { return ClipCursor(IntPtr.Zero); }
 }
+
+// Windows-Einbettung (05.11.2026): DPI-Modus, eigene AppUserModelID, Angaben fuers Anheften, Taskleistenknopf blinken lassen
+public static class SdWindows {
+    [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+    [DllImport("shell32.dll")] static extern int SHGetPropertyStoreForWindow(IntPtr hwnd, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out SdPropertyStore store);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref SdPropVariant pv);
+    [DllImport("user32.dll")] static extern bool FlashWindowEx(ref SdFlash info);
+
+    // -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (ab Windows 10 1703). false = schon festgelegt oder zu altes Windows.
+    // Ohne das waere WPF in powershell.exe nur System-DPI: auf dem Bildschirm mit anderer Skalierung skaliert Windows das Bild unscharf.
+    public static bool ProMonitorDpi() { try { return SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { return false; } }
+    public static bool AppId(string id) { return SetCurrentProcessExplicitAppUserModelID(id) == 0; }
+
+    // Angaben fuers Anheften an die Taskleiste (Startbefehl, Name, Symbol). null = entfernen - beim Schliessen des Fensters.
+    public static bool FensterEigenschaften(IntPtr hwnd, string appId, string befehl, string name, string symbol) {
+        Guid iid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
+        SdPropertyStore ps;
+        if (SHGetPropertyStoreForWindow(hwnd, ref iid, out ps) != 0 || ps == null) return false;
+        try {
+            Setze(ps, 2, befehl);   // System.AppUserModel.RelaunchCommand
+            Setze(ps, 3, symbol);   // System.AppUserModel.RelaunchIconResource
+            Setze(ps, 4, name);     // System.AppUserModel.RelaunchDisplayNameResource
+            Setze(ps, 5, appId);    // System.AppUserModel.ID
+            return ps.Commit() == 0;
+        } finally { Marshal.ReleaseComObject(ps); }
+    }
+    static void Setze(SdPropertyStore ps, uint pid, string wert) {
+        SdPropertyKey key = new SdPropertyKey { fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid = pid };
+        SdPropVariant pv = new SdPropVariant();
+        if (wert != null) { pv.vt = 31; pv.p = Marshal.StringToCoTaskMemUni(wert); }   // VT_LPWSTR, sonst VT_EMPTY
+        try { ps.SetValue(ref key, ref pv); } finally { PropVariantClear(ref pv); }
+    }
+    // Taskleistenknopf blinkt, bis das Fenster nach vorn kommt (Ersatz, falls keine Benachrichtigung angezeigt werden kann)
+    public static void Blinken(IntPtr hwnd) {
+        SdFlash f = new SdFlash { cbSize = (uint)Marshal.SizeOf(typeof(SdFlash)), hwnd = hwnd, dwFlags = 2 | 12, uCount = 3, dwTimeout = 0 };
+        FlashWindowEx(ref f);
+    }
+}
+[StructLayout(LayoutKind.Sequential, Pack = 4)] public struct SdPropertyKey { public Guid fmtid; public uint pid; }
+[StructLayout(LayoutKind.Sequential)] public struct SdPropVariant { public ushort vt; public ushort r1; public ushort r2; public ushort r3; public IntPtr p; public IntPtr p2; }
+[StructLayout(LayoutKind.Sequential)] public struct SdFlash { public uint cbSize; public IntPtr hwnd; public uint dwFlags; public uint uCount; public uint dwTimeout; }
+[ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface SdPropertyStore {
+    [PreserveSig] int GetCount(out uint count);
+    [PreserveSig] int GetAt(uint index, out SdPropertyKey key);
+    [PreserveSig] int GetValue(ref SdPropertyKey key, out SdPropVariant value);
+    [PreserveSig] int SetValue(ref SdPropertyKey key, ref SdPropVariant value);
+    [PreserveSig] int Commit();
+}
 '@
 }
+# Vor dem ersten Fenster: scharf auf jedem Bildschirm, eigene Taskleistengruppe (siehe SdWindows)
+try { [void][SdWindows]::ProMonitorDpi(); [void][SdWindows]::AppId($Script:AppId) } catch { }
 
 # ============================================================================
 #  Design: Farben, Schriften, Steuerelement-Vorlagen
@@ -3170,7 +3232,7 @@ function Start-RueckmeldungAbholen {
     if ($Script:NurLesen -or $Script:MaschinenId -ne $Script:Pc1Id) { return }
     $skript = Join-Path $Script:Ordner 'Installer\Rueckmeldungen-abholen.ps1'
     if (-not (Test-Path -LiteralPath $skript) -or -not (Test-Path -LiteralPath (Join-Path $env:APPDATA 'Systemdiagnose-Signatur\rueckmeldung-privat.bin'))) { return }
-    Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$skript`"")
+    Start-Process -FilePath $Script:PowerShellExe -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$skript`"")
 }
 
 function Show-Fehlerbericht {
@@ -4092,8 +4154,69 @@ function Show-ProgrammeSchliessen {
 #  Laeufe (Diagnose, Bereinigung, Rueckgaengig) - ohne das Fenster zu blockieren
 # ============================================================================
 
+# Fortschritt auch im Taskleistenknopf (gruen laufend / Prozent / aus) - sichtbar, wenn das Fenster hinten oder minimiert ist
+function Set-TaskleistenFortschritt {
+    param([string] $Zustand, [double] $Anteil = -1)
+    $t = $Script:Fenster.TaskbarItemInfo
+    if (-not $t) { return }
+    $t.ProgressState = $Zustand
+    if ($Anteil -ge 0) { $t.ProgressValue = [Math]::Max(0.0, [Math]::Min(1.0, $Anteil)) }
+}
+
+# Angaben fuers Anheften an die Taskleiste: ohne sie heftete Windows "Windows PowerShell" an (startet nicht die App).
+# Beim Schliessen wieder entfernen ($false), so verlangt es die Taskleiste.
+function Set-TaskleistenAngaben {
+    param([bool] $An)
+    if ($Vorschau) { return }
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($Script:Fenster)).Handle
+        if ($hwnd -eq [IntPtr]::Zero) { return }
+        if (-not $An) { [void][SdWindows]::FensterEigenschaften($hwnd, $null, $null, $null, $null); return }
+        $starter = Join-Path $Script:Ordner 'Systemdiagnose.exe'
+        $app = Join-Path $Script:Ordner 'Systemdiagnose-App.ps1'
+        $befehl = if (Test-Path -LiteralPath $starter) { "`"$starter`"" } else { "`"$Script:PowerShellExe`" -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$app`"" }
+        $ico = Join-Path $Script:Ordner 'Design\Symbol.ico'
+        $symbol = if (Test-Path -LiteralPath $ico) { "$ico,0" } elseif (Test-Path -LiteralPath $starter) { "$starter,0" } else { "$Script:PowerShellExe,0" }
+        [void][SdWindows]::FensterEigenschaften($hwnd, $Script:AppId, $befehl, 'Systemdiagnose', $symbol)
+    } catch { }
+}
+
+# Name und Symbol fuer Windows-Benachrichtigungen dieser App (HKCU\Software\Classes\AppUserModelId\<AppId>) - nur dieser eine
+# Schluessel, nur wenn er fehlt oder veraltet ist; der Installer entfernt ihn bei der Deinstallation.
+function Register-Benachrichtigung {
+    $schluessel = 'HKCU:\Software\Classes\AppUserModelId\' + $Script:AppId
+    $symbol = Join-Path $Script:Ordner 'Design\Symbol.png'
+    $alt = Get-ItemProperty -LiteralPath $schluessel -ErrorAction SilentlyContinue
+    if ($alt -and $alt.DisplayName -eq 'Systemdiagnose' -and ($alt.IconUri -eq $symbol -or -not (Test-Path -LiteralPath $symbol))) { return }
+    if (-not (Test-Path -LiteralPath $schluessel)) { [void](New-Item -Path $schluessel) }
+    Set-ItemProperty -LiteralPath $schluessel -Name 'DisplayName' -Value 'Systemdiagnose'
+    if (Test-Path -LiteralPath $symbol) { Set-ItemProperty -LiteralPath $schluessel -Name 'IconUri' -Value $symbol }
+}
+
+# Ein laengerer Lauf ist fertig und das Fenster ist gerade nicht vorn (z. B. Gruendlich im Hintergrund): Windows-Benachrichtigung
+# + blinkender Taskleistenknopf. Bei Vollbild-Spielen und "Nicht stoeren" haelt Windows die Benachrichtigung selbst zurueck
+# (landet still in der Mitteilungszentrale) - der Knopf zeigt es trotzdem an.
+function Send-FertigMeldung {
+    param($Lauf)
+    if ($Script:NurLesen -or $Script:Fenster.IsActive -or ((Get-Date) - $Lauf.Start).TotalSeconds -lt 15) { return }
+    $titel, $text = switch ([string]$Lauf.Art) {
+        'Diagnose'    { $(if ($Lauf.Modus -eq 'Gruendlich') { 'Gründliche Prüfung fertig' } else { 'Prüfung fertig' }), 'Das Ergebnis steht in der Systemdiagnose.' }
+        'Analyse'     { 'Analyse fertig', 'Die Reinigungskategorien sind gemessen.' }
+        'Bereinigung' { $(if ($Lauf.Quelle -eq 'Reinigung') { 'Reinigung fertig' } else { 'Behebung fertig' }), 'Das Ergebnis steht in der Systemdiagnose.' }
+        default       { 'Rückgängig fertig', 'Das Ergebnis steht in der Systemdiagnose.' }
+    }
+    try { [SdWindows]::Blinken((New-Object System.Windows.Interop.WindowInteropHelper($Script:Fenster)).Handle) } catch { }
+    Register-Benachrichtigung
+    $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+    $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+    $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+    $xml.LoadXml(('<toast><visual><binding template="ToastGeneric"><text>{0}</text><text>{1}</text></binding></visual></toast>' -f [Security.SecurityElement]::Escape($titel), [Security.SecurityElement]::Escape($text)))
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($Script:AppId).Show((New-Object Windows.UI.Notifications.ToastNotification($xml)))
+}
+
 function Show-Overlay {
     param([string] $Titel, [string] $Text, [bool] $Unbestimmt, [string] $Icon = [string][char]0xE9D9)
+    Set-TaskleistenFortschritt $(if ($Unbestimmt) { 'Indeterminate' } else { 'Normal' }) 0
     (Get-Element 'OverlayTitel').Text = $Titel
     (Get-Element 'OverlayText').Text = $Text
     (Get-Element 'OverlayIcon').Text = $Icon
@@ -4141,6 +4264,7 @@ function Update-LaufMini {
 }
 
 function Hide-Overlay {
+    Set-TaskleistenFortschritt 'None'
     (Get-Element 'LaufMini').Visibility = 'Collapsed'
     Set-StartKnopfVerdeckt $false
     (Get-Element 'Overlay').Visibility = 'Collapsed'
@@ -4154,27 +4278,56 @@ function Get-GewaehlterModus {
     return 'Schnell'
 }
 
+# Startet Engine/Bereiniger unsichtbar. Start-Process -Verb RunAs laesst waehrenddessen die Nachrichtenschleife des Fensters
+# weiterlaufen (05.11. gemessen) - ohne die Sperre startete ein weiterer Klick einen zweiten Lauf (05.11.: sechs Gruendlich-
+# Pruefungen parallel). Jeder Start-* prueft deshalb auch $Script:StartLaeuft. -Niedrig: Prioritaet "Niedriger als normal" -
+# Spiele und Programme im Vordergrund gehen vor, im Leerlauf ist die Pruefung gleich schnell; Kindprozesse (DISM, SFC ...) erben sie.
+function Start-Kindprozess {
+    param([string] $Argumente, [switch] $Admin, [string] $Ausgabe, [switch] $Niedrig)
+    $Script:StartLaeuft = $true
+    try {
+        $p = @{ FilePath = $Script:PowerShellExe; ArgumentList = $Argumente; WindowStyle = 'Hidden'; PassThru = $true }
+        if ($Admin) { $p.Verb = 'RunAs' }
+        if ($Ausgabe) { $p.RedirectStandardOutput = $Ausgabe }
+        $prozess = Start-Process @p
+        # Ein erhoehter Prozess laesst sich von hier nicht aendern - der setzt seine Prioritaet selbst (siehe Start-Diagnose)
+        if ($Niedrig -and -not $Admin) { try { $prozess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch { } }
+        return $prozess
+    } finally { $Script:StartLaeuft = $false }
+}
+
+# Alte Protokolle abgebrochener oder verwaister Laeufe (App waehrend einer Pruefung beendet) aus %TEMP% entfernen.
+# Nur genau dieses Namensmuster, nur aelter als 6 Stunden - ein laufender Lauf ist nie so alt.
+function Remove-AlteLaufprotokolle {
+    if ($Script:NurLesen) { return }
+    $grenze = (Get-Date).AddHours(-6)
+    foreach ($f in @(Get-ChildItem -LiteralPath $env:TEMP -Filter 'Systemdiagnose-*.log*' -File -ErrorAction SilentlyContinue)) {
+        if ($f.Name -match '^Systemdiagnose-[0-9a-f]{32}\.log(\.abbruch)?$' -and $f.LastWriteTime -lt $grenze) { try { [IO.File]::Delete($f.FullName) } catch { } }
+    }
+}
+
 function Start-Diagnose {
     # -Vorher (aus Get-Vorher): danach mit diesem Stand vergleichen
     param([string] $Modus, $Vorher)
-    if ($Script:Lauf -or $Script:NurLesen) { return }
+    if ($Script:Lauf -or $Script:StartLaeuft -or $Script:NurLesen) { return }
     $argumente = "-NoProfile -ExecutionPolicy Bypass -File `"$Script:Engine`" -Modus $Modus -KeinBrowser"
     $lauf = @{ Art = 'Diagnose'; Modus = $Modus; Start = (Get-Date); Log = $null; StatusDatei = $null; Vorher = $Vorher; Gewichte = (Get-QuellenGewichte $Modus) }
     $lauf.Log = Join-Path $env:TEMP ('Systemdiagnose-' + [guid]::NewGuid().ToString('N') + '.log')
     try {
         if ($Modus -eq 'Schnell') {
-            $lauf.Prozess = Start-Process -FilePath 'powershell.exe' -ArgumentList $argumente -WindowStyle Hidden -RedirectStandardOutput $lauf.Log -PassThru
+            $lauf.Prozess = Start-Kindprozess $argumente -Ausgabe $lauf.Log -Niedrig
         } else {
             # Mit Adminrechten laesst sich die Ausgabe nicht umleiten - ein Protokoll (Transcript) des erhoehten Prozesses
             # liefert dieselben Zeilen fuer den Fortschritt. Die Engine selbst schreibt weiterhin nur in Berichte\.
             # Abbrechen: die App darf den erhoehten Prozess nicht beenden - ein Waechter-Thread darin beendet ihn samt DISM/SFC,
             # sobald die App die Datei <Log>.abbruch anlegt. Als -EncodedCommand, damit keine Anfuehrungszeichen verschachtelt werden.
             $befehl = @"
+try { [System.Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch { }
 `$w = [powershell]::Create().AddScript({ param(`$f, `$p) while (-not (Test-Path -LiteralPath `$f)) { Start-Sleep -Milliseconds 400 }; taskkill.exe /T /F /PID `$p | Out-Null }).AddArgument('$($lauf.Log).abbruch').AddArgument(`$PID); [void]`$w.BeginInvoke()
 Start-Transcript -LiteralPath '$($lauf.Log)' | Out-Null; & '$Script:Engine' -Modus $Modus -KeinBrowser; Stop-Transcript | Out-Null
 "@
             $kodiert = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($befehl))
-            $lauf.Prozess = Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $kodiert" -Verb RunAs -WindowStyle Hidden -PassThru
+            $lauf.Prozess = Start-Kindprozess "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $kodiert" -Admin
         }
     } catch {
         Show-Hinweis 'Prüfung nicht gestartet' "Windows hat die Prüfung nicht gestartet - vermutlich wurden die Adminrechte nicht erteilt.`n`n$($_.Exception.Message)"
@@ -4200,10 +4353,10 @@ function Stop-Lauf {
 
 function Start-Analyse {
     param($Vorher)
-    if ($Script:Lauf -or $Script:NurLesen) { return }
+    if ($Script:Lauf -or $Script:StartLaeuft -or $Script:NurLesen) { return }
     $log = Join-Path $env:TEMP ('Systemdiagnose-' + [guid]::NewGuid().ToString('N') + '.log')
     $argumente = "-NoProfile -ExecutionPolicy Bypass -File `"$Script:Engine`" -Modus Reinigung -KeinBrowser"
-    try { $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argumente -WindowStyle Hidden -RedirectStandardOutput $log -PassThru }
+    try { $p = Start-Kindprozess $argumente -Ausgabe $log -Niedrig }
     catch { Show-Hinweis 'Analyse nicht gestartet' $_.Exception.Message; return }
     $Script:Lauf = @{ Art = 'Analyse'; Start = (Get-Date); Prozess = $p; Log = $log; StatusDatei = $null; Vorher = $Vorher }
     Show-Overlay 'Analyse läuft …' 'Die Reinigungskategorien werden gemessen …' $true ([string][char]0xE721)
@@ -4213,7 +4366,7 @@ function Start-Analyse {
 function Start-Bereinigung {
     param([object[]] $Wahl, [string] $Quelle = 'Befunde')
     $wahl = @($Wahl | Where-Object { $_ })
-    if ($wahl.Count -eq 0 -or $Script:Lauf -or $Script:NurLesen) { return }
+    if ($wahl.Count -eq 0 -or $Script:Lauf -or $Script:StartLaeuft -or $Script:NurLesen) { return }
     $wahl = @(Confirm-ProgrammeGeschlossen $wahl | Where-Object { $_ })
     if ($wahl.Count -eq 0) { return }
     if (-not (Show-Bestaetigung $wahl)) { return }
@@ -4227,7 +4380,7 @@ function Start-Bereinigung {
     $planPfad = Join-Path $Script:BereinigungsOrdner "Plan-$stempel.json"
     [IO.File]::WriteAllText($planPfad, ($plan | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($true)))
     $argumente = "-NoProfile -ExecutionPolicy Bypass -File `"$Script:Bereiniger`" -Plan `"$planPfad`""
-    try { $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argumente -Verb RunAs -WindowStyle Hidden -PassThru }
+    try { $p = Start-Kindprozess $argumente -Admin }
     catch { Show-Hinweis 'Nicht gestartet' 'Die Adminrechte wurden nicht erteilt - es wurde nichts verändert.'; return }
     $Script:Lauf = @{ Art = 'Bereinigung'; Quelle = $Quelle; Start = (Get-Date); Prozess = $p; Log = $null; Wahl = $wahl
         StatusDatei = (Join-Path $Script:BereinigungsOrdner "Status-$stempel.txt"); ErgebnisDatei = (Join-Path $Script:BereinigungsOrdner "Ergebnis-$stempel.json") }
@@ -4238,10 +4391,10 @@ function Start-Bereinigung {
 
 function Start-Rueckgaengig {
     param([string] $ErgebnisDatei)
-    if ($Script:Lauf -or $Script:NurLesen -or -not (Test-Path -LiteralPath $ErgebnisDatei)) { return }
+    if ($Script:Lauf -or $Script:StartLaeuft -or $Script:NurLesen -or -not (Test-Path -LiteralPath $ErgebnisDatei)) { return }
     $stempel = (Get-Date).ToString('yyyyMMdd_HHmmss')
     $argumente = "-NoProfile -ExecutionPolicy Bypass -File `"$Script:Bereiniger`" -Rueckgaengig `"$ErgebnisDatei`" -Stempel $stempel"
-    try { $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argumente -Verb RunAs -WindowStyle Hidden -PassThru }
+    try { $p = Start-Kindprozess $argumente -Admin }
     catch { Show-Hinweis 'Nicht gestartet' 'Die Adminrechte wurden nicht erteilt - es wurde nichts verändert.'; return }
     $Script:Lauf = @{ Art = 'Rueckgaengig'; Start = (Get-Date); Prozess = $p; Log = $null
         StatusDatei = (Join-Path $Script:BereinigungsOrdner "Status-$stempel.txt"); ErgebnisDatei = (Join-Path $Script:BereinigungsOrdner "Rueckgaengig-$stempel.json") }
@@ -4256,6 +4409,7 @@ function Set-OverlayProzent {
     $f.IsIndeterminate = $false
     if ($w -gt $f.Value) { $f.Value = $w }
     (Get-Element 'OverlayProzent').Text = ('{0:N0} %' -f $f.Value)
+    Set-TaskleistenFortschritt 'Normal' ($f.Value / 100)
 }
 
 # Gewichte fuer den Prozentbalken: Dauer jeder Datenquelle im letzten Lauf derselben Stufe (Tief zaehlt als Gruendlich)
@@ -4360,6 +4514,8 @@ function Update-Lauf {
         foreach ($f in $l.Log, ($l.Log + '.abbruch')) { if ($f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue } }
         return
     }
+    # Vor Complete-*: die zeigen evtl. einen Dialog, der bis zum Klick wartet
+    try { Send-FertigMeldung $l } catch { }
     if ($l.Art -eq 'Diagnose') { Complete-Diagnose $l }
     elseif ($l.Art -eq 'Analyse') { Complete-Analyse $l }
     else { Complete-Bereinigung $l }
@@ -4990,7 +5146,7 @@ function Invoke-SofortAktion {
             }
             if (-not $befehl -or ($befehl -match 'chkdsk' -and -not $lw)) { Show-Hinweis 'Nicht erlaubt' "Der Befehl '$($p.Befehl)' steht nicht auf der Liste der erlaubten Befehle."; return }
             [System.Windows.Clipboard]::SetText($befehl)
-            try { Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoExit -NoLogo -NoProfile' -Verb RunAs }
+            try { Start-Process -FilePath $Script:PowerShellExe -ArgumentList '-NoExit -NoLogo -NoProfile' -Verb RunAs }
             catch { Show-Hinweis 'Nicht geöffnet' "Was? Die Admin-PowerShell wurde nicht geöffnet.`n`nWarum? Die Adminrechte wurden nicht erteilt.`n`nWas tun? Der Befehl liegt trotzdem in der Zwischenablage:`n$befehl"; return }
             Show-Hinweis 'Befehl bereit' "In der Zwischenablage liegt:`n$befehl`n`nIm blauen Admin-Fenster Strg+V (oder Rechtsklick) drücken und mit Enter bestätigen. Erst dann läuft er - vorher passiert nichts."
         }
@@ -5049,6 +5205,9 @@ try {
 
 $Script:Fenster = New-XamlObjekt $Script:FensterXaml
 Set-Titelleiste $Script:Fenster
+# Taskleiste: Fortschritt im Knopf, Angaben fuers Anheften (siehe Set-TaskleistenAngaben)
+$Script:Fenster.TaskbarItemInfo = New-Object System.Windows.Shell.TaskbarItemInfo
+$Script:Fenster.Add_SourceInitialized({ Set-TaskleistenAngaben $true })
 
 $Script:Uhr = New-Object System.Windows.Threading.DispatcherTimer
 $Script:Uhr.Interval = [TimeSpan]::FromMilliseconds(400)
@@ -5076,6 +5235,9 @@ foreach ($n in 'BefundListe', 'Detail', 'ReinigungScroll', 'ReinigungInfoScroll'
 $Script:NotenUhr = New-Object System.Windows.Threading.DispatcherTimer
 $Script:NotenUhr.Interval = [TimeSpan]::FromMinutes(1)
 $Script:NotenUhr.Add_Tick({ try { Update-Note } catch { } })
+# Fenster zu waehrend einer Pruefung/Analyse: den Lauf mitbeenden, damit nichts unsichtbar weiterlaeuft (Gruendlich sonst bis zu
+# 10 Min. mit Adminrechten). Behebung/Reinigung/Rueckgaengig laufen bewusst zu Ende - halb ausgefuehrte Aenderungen waeren schlimmer.
+$Script:Fenster.Add_Closing({ try { Stop-Lauf } catch { }; Set-TaskleistenAngaben $false })
 $Script:Fenster.Add_ContentRendered({ $Script:NotenUhr.Start(); try { Show-ProfilHinweis; Start-AutoPruefung } catch { }; try { Start-UpdatePruefung } catch { }; try { Start-Rueckmeldungsversand; Start-RueckmeldungAbholen } catch { } })
 (Get-Element 'BereinigenKnopf').Add_Click({ Start-Bereinigung @(Get-AusgewaehlteLoesungen) 'Befunde' })
 (Get-Element 'ReinigenKnopf').Add_Click({ Start-Bereinigung @(Get-ReinigungsWahl) 'Reinigung' })
@@ -5158,6 +5320,7 @@ function Remove-AlteBerichte {
 # PC erkennen, dann Archiv und letztes Ergebnis DIESES PCs laden
 $Script:MaschinenId = Get-MaschinenId
 try { [void](Remove-AlteBerichte) } catch { }
+try { Remove-AlteLaufprotokolle } catch { }
 Update-FehlerPunkt
 Import-Archiv
 $letzte = Get-NeuesteEigeneDatei 'Befunde-*.json'
