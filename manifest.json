@@ -1,20 +1,21 @@
 {
     "Format":  "Systemdiagnose-Update/1",
-    "Version":  "2.9.3",
-    "Datum":  "2026-11-02 04:01",
+    "Version":  "2.9.4",
+    "Datum":  "2026-11-05 06:37",
     "Neu":  [
-                "Programmsymbol in Rot"
+                "Fehler melden: Bericht geht jetzt automatisch und verschlüsselt an den Entwickler",
+                "Ohne Internet wird er beim nächsten Start nachgeschickt"
             ],
     "Dateien":  [
                     {
                         "Pfad":  "Systemdiagnose.ps1",
-                        "Sha256":  "D50E156FC745693BC607B4E5B95C849CB7D657A966C8E1B714CEACCEBC2CD3B2",
+                        "Sha256":  "7CE3545F4594D0BFD2BC040F68003102295B8EC19A9B883307CF9FA08E3E70E3",
                         "Bytes":  247326
                     },
                     {
                         "Pfad":  "Systemdiagnose-App.ps1",
-                        "Sha256":  "FCD0FCF4CEE191F12EBDD16E7FB70525F14D27A3DCE6C4EC5B6274BCE5365463",
-                        "Bytes":  334224
+                        "Sha256":  "4166912A4272D264B5C878E4E4879F9ED8D1E78EDBB133A068E6E954E5426DFC",
+                        "Bytes":  342899
                     },
                     {
                         "Pfad":  "Bereinigung.ps1",
@@ -50,6 +51,11 @@
                         "Pfad":  "Design\\Symbol.png",
                         "Sha256":  "1D5A9ADE047D18F3434FEDC494E7CE8AA561CB5C40FCF504E0A0E9F0DED6EBDC",
                         "Bytes":  115489
+                    },
+                    {
+                        "Pfad":  "Rueckmeldung.psd1",
+                        "Sha256":  "27F03EB991CE2CF53272727749165B41E92EB99822776F04243BC0BD4EB82FC6",
+                        "Bytes":  1085
                     }
                 ]
 }

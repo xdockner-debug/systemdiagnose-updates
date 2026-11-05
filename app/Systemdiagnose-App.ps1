@@ -602,6 +602,7 @@ $Script:DesignXaml = @'
   </Style>
 
   <Style TargetType="TabControl">
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="TabControl">
@@ -628,6 +629,8 @@ $Script:DesignXaml = @'
   <!-- Schrift und Farbe nur fuer die Reiterbeschriftung - der Seiteninhalt erbt sie so nicht -->
   <Style TargetType="TabItem">
     <Setter Property="Cursor" Value="Hand"/>
+    <!-- Kein gepunkteter Windows-Fokusrahmen um den angeklickten Reiter -->
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
     <!-- Ohne eigene Farbe erbt der Reiterinhalt Schwarz aus dem Windows-Standarddesign -->
     <Setter Property="Foreground" Value="{DynamicResource Text}"/>
     <Setter Property="FontWeight" Value="Normal"/>
@@ -1880,7 +1883,7 @@ $Script:FehlerberichtXaml = @'
         <TextBlock Text="Fehler melden" FontFamily="{DynamicResource Anzeige}" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"/>
       </StackPanel>
       <TextBlock Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,14,0,0" TextBlock.LineHeight="20"
-                 Text="Fasst Fehlermeldungen und Fehlercodes dieser App auf diesem PC in einer Datei zusammen - für die Weiterentwicklung. Enthalten sind nur Programmfehler, Messwerte, PC-Name und Windows-Version, keine persönlichen Dateien."/>
+                 Text="Fasst Fehlermeldungen und Fehlercodes dieser App auf diesem PC in einem Bericht zusammen und schickt ihn verschlüsselt an den Entwickler (PC 1, nur dort lesbar) - für die Weiterentwicklung. Eine Kopie bleibt auf dem Desktop. Enthalten sind nur Programmfehler, Messwerte, PC-Name und Windows-Version, keine persönlichen Dateien."/>
       <TextBlock Text="Von der App selbst bemerkt" Style="{StaticResource AbschnittKopf}" Margin="0,20,0,8"/>
       <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Linie}" BorderThickness="1" CornerRadius="10" Padding="14,10">
         <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
@@ -1907,7 +1910,7 @@ $Script:FehlerberichtXaml = @'
       </TextBox>
       <DockPanel Margin="0,22,0,0" LastChildFill="False">
         <Button x:Name="Erstellen" DockPanel.Dock="Right" Style="{StaticResource PrimaerKnopf}" IsDefault="True">
-          <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE74E;" FontFamily="{StaticResource Icons}" Margin="0,2,8,0"/><TextBlock Text="Bericht speichern"/></StackPanel>
+          <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE724;" FontFamily="{StaticResource Icons}" Margin="0,2,8,0"/><TextBlock Text="Bericht senden"/></StackPanel>
         </Button>
         <Button x:Name="Schliessen" DockPanel.Dock="Right" Style="{StaticResource Knopf}" Content="Schließen" Margin="0,0,10,0" IsCancel="True"/>
       </DockPanel>
@@ -3057,6 +3060,119 @@ function New-Fehlerbericht {
     }
 }
 
+# ---- Automatische Übermittlung (02.11.): Bericht verschlüsselt (RSA-OAEP + AES-256 + HMAC, lesbar nur mit dem privaten
+# Schlüssel auf PC 1) in das private Repo aus Rueckmeldung.psd1 (Zugang darf nur dort schreiben). PC 1 holt mit
+# Installer\Rueckmeldungen-abholen.ps1 nach Rueckmeldungen\. Ohne Netz bleibt der Bericht im Ausgang und geht beim nächsten Start mit.
+$Script:RueckmeldungApi     = 'https://api.github.com'
+$Script:RueckmeldungAusgang = Join-Path $Script:DatenOrdner 'Rueckmeldungen-Ausgang'
+
+function Get-RueckmeldungZiel {
+    $datei = Join-Path $Script:Ordner 'Rueckmeldung.psd1'
+    if (-not (Test-Path -LiteralPath $datei)) { return $null }
+    try { $z = Import-PowerShellDataFile -LiteralPath $datei } catch { Write-Fehlerlog "Rückmeldung: Rueckmeldung.psd1 unlesbar - $($_.Exception.Message)"; return $null }
+    if ($z.Format -ne 'Systemdiagnose-Rueckmeldeziel/1' -or [string]$z.Repo -notmatch '^[\w.-]+/[\w.-]+$' -or -not $z.Schluessel -or -not $z.Zugang) { return $null }
+    # Zugang nur verschleiert (sonst widerruft GitHub ihn im öffentlichen Update-Repo sofort) - er kann ohnehin nur in dieses Repo schreiben
+    $b = [Convert]::FromBase64String([string]$z.Zugang); [array]::Reverse($b)
+    for ($i = 0; $i -lt $b.Length; $i++) { $b[$i] = $b[$i] -bxor 0x5A }
+    return @{ Repo = [string]$z.Repo; Schluessel = [string]$z.Schluessel; Zugang = [Text.Encoding]::ASCII.GetString($b) }
+}
+
+function Protect-Rueckmeldung {
+    param([string] $Json, [string] $Schluessel)
+    $roh = [Text.Encoding]::UTF8.GetBytes($Json)
+    $ms = New-Object IO.MemoryStream
+    $gz = New-Object IO.Compression.GZipStream($ms, [IO.Compression.CompressionMode]::Compress)
+    $gz.Write($roh, 0, $roh.Length); $gz.Close()
+    $klar = $ms.ToArray()
+    $aes = [Security.Cryptography.Aes]::Create(); $aes.KeySize = 256; $aes.GenerateKey(); $aes.GenerateIV()
+    $macSchluessel = New-Object byte[] 32
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($macSchluessel)
+    $daten = $aes.CreateEncryptor().TransformFinalBlock($klar, 0, $klar.Length)
+    $mac = [Security.Cryptography.HMACSHA256]::new($macSchluessel).ComputeHash([byte[]]($aes.IV + $daten))
+    $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider
+    $rsa.PersistKeyInCsp = $false
+    $rsa.FromXmlString($Schluessel)
+    $huelle = $rsa.Encrypt([byte[]]($aes.Key + $macSchluessel), $true)
+    return ([ordered]@{ Format = 'Systemdiagnose-Rueckmeldung/1'; Schluessel = [Convert]::ToBase64String($huelle); Iv = [Convert]::ToBase64String($aes.IV)
+        Daten = [Convert]::ToBase64String($daten); Mac = [Convert]::ToBase64String($mac) } | ConvertTo-Json -Compress)
+}
+
+# Legt den Bericht verschlüsselt in den Ausgang; $false = keine Übermittlung eingerichtet (ältere Installation)
+function Add-RueckmeldungAusgang {
+    param([string] $Json, [string] $Name)
+    $ziel = Get-RueckmeldungZiel
+    if (-not $ziel) { return $false }
+    [void](New-Item -ItemType Directory -Force -Path $Script:RueckmeldungAusgang)
+    $datei = Join-Path $Script:RueckmeldungAusgang ($Name + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
+    [IO.File]::WriteAllText($datei, (Protect-Rueckmeldung $Json $ziel.Schluessel), (New-Object Text.UTF8Encoding($false)))
+    return $true
+}
+
+# Schickt alles aus dem Ausgang (Hintergrund, max. 60 s); -Rueckmeldung bekommt ($erfolg, $grund) - ohne läuft es still (Start)
+function Start-Rueckmeldungsversand {
+    param([scriptblock] $Rueckmeldung)
+    if ($Script:NurLesen) { return }
+    $Script:VersandRueckmeldung = $Rueckmeldung
+    if ($Script:VersandUhr -and $Script:VersandUhr.IsEnabled) { return }
+    $ziel = Get-RueckmeldungZiel
+    $dateien = @(Get-ChildItem -LiteralPath $Script:RueckmeldungAusgang -Filter '*.txt' -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    if (-not $ziel -or -not $dateien.Count) { return }
+    $ps = [PowerShell]::Create()
+    [void]$ps.AddScript({
+        param($Api, $Repo, $Zugang, $Dateien)
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $gesendet = 0; $fehler = ''
+        foreach ($f in $Dateien) {
+            $name = [IO.Path]::GetFileName($f)
+            $wc = New-Object Net.WebClient
+            $wc.Encoding = [Text.Encoding]::UTF8
+            $wc.Headers['User-Agent'] = 'Systemdiagnose'
+            $wc.Headers['Accept'] = 'application/vnd.github+json'
+            $wc.Headers['Authorization'] = "Bearer $Zugang"
+            $wc.Headers['Content-Type'] = 'application/json'
+            $body = @{ message = "Rueckmeldung $name"; content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($f)) } | ConvertTo-Json -Compress
+            try { [void]$wc.UploadString("$Api/repos/$Repo/contents/eingang/$name", 'PUT', $body); [IO.File]::Delete($f); $gesendet++ }
+            catch {
+                $ex = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
+                $code = try { [int]$ex.Response.StatusCode } catch { 0 }
+                $fehler = $(switch ($code) { 401 { 'Zugang abgelaufen oder widerrufen (401)' } 403 { 'Zugang ohne Schreibrecht (403)' } 404 { 'Ziel-Repo nicht gefunden (404)' } default { $ex.Message } })
+                break
+            }
+        }
+        @{ Gesendet = $gesendet; Fehler = $fehler }
+    }).AddArgument($Script:RueckmeldungApi).AddArgument($ziel.Repo).AddArgument($ziel.Zugang).AddArgument($dateien)
+    $Script:Versand = @{ Ps = $ps; Handle = $ps.BeginInvoke(); Start = Get-Date }
+    $Script:VersandUhr = New-Object System.Windows.Threading.DispatcherTimer
+    $Script:VersandUhr.Interval = [TimeSpan]::FromMilliseconds(400)
+    $Script:VersandUhr.Add_Tick({
+        $v = $Script:Versand
+        if (-not $v.Handle.IsCompleted -and ((Get-Date) - $v.Start).TotalSeconds -lt 60) { return }
+        $Script:VersandUhr.Stop()
+        $ok = $false; $grund = ''
+        try {
+            if (-not $v.Handle.IsCompleted) { $v.Ps.Stop(); $grund = 'keine Antwort von GitHub (Internetverbindung?)' }
+            else {
+                $r = @($v.Ps.EndInvoke($v.Handle))[0]
+                if ($r.Fehler) { $grund = [string]$r.Fehler } elseif ($r.Gesendet) { $ok = $true } else { $grund = 'nichts gesendet' }
+            }
+        } catch { $grund = $_.Exception.Message }
+        finally {
+            $v.Ps.Dispose()
+            if (-not $ok) { Write-Fehlerlog "Rückmeldung nicht übermittelt: $grund" }
+            if ($Script:VersandRueckmeldung) { try { & $Script:VersandRueckmeldung $ok $grund } catch { } }
+        }
+    })
+    $Script:VersandUhr.Start()
+}
+
+# Nur PC 1: neue Berichte im Hintergrund abholen (eigenes Skript, braucht den privaten Schlüssel dieses Windows-Kontos)
+function Start-RueckmeldungAbholen {
+    if ($Script:NurLesen -or $Script:MaschinenId -ne $Script:Pc1Id) { return }
+    $skript = Join-Path $Script:Ordner 'Installer\Rueckmeldungen-abholen.ps1'
+    if (-not (Test-Path -LiteralPath $skript) -or -not (Test-Path -LiteralPath (Join-Path $env:APPDATA 'Systemdiagnose-Signatur\rueckmeldung-privat.bin'))) { return }
+    Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$skript`"")
+}
+
 function Show-Fehlerbericht {
     $d = New-Dialog $Script:FehlerberichtXaml
     $funde = @(Get-FehlerFunde)
@@ -3072,14 +3188,29 @@ function Show-Fehlerbericht {
         $name = 'Systemdiagnose-Fehlerbericht-{0}-{1}.json' -f ($env:COMPUTERNAME -replace '[^A-Za-z0-9\-]', '_'), (Get-Date -Format 'yyyy-MM-dd_HHmmss')
         $ziel = Join-Path ([Environment]::GetFolderPath('Desktop')) $name
         if ($Script:NurLesen) { $ziel = Join-Path $env:TEMP $name }
-        [IO.File]::WriteAllText($ziel, ($bericht | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($true)))
+        $json = $bericht | ConvertTo-Json -Depth 8
+        [IO.File]::WriteAllText($ziel, $json, (New-Object Text.UTF8Encoding($true)))
         $Script:Einstellungen.LetzterFehlerbericht = $bericht.Erstellt
         Save-Einstellungen
         Update-FehlerPunkt
         $w.Close()
         if ($Script:NurLesen) { return }
-        Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$ziel`""
-        Show-Hinweis 'Bericht gespeichert' ("Was? $name liegt auf dem Desktop ($([math]::Max(1, [math]::Round((Get-Item -LiteralPath $ziel).Length / 1KB))) KB).`n`nWas tun? Die Datei an PC 1 schicken (Google Drive, Mail oder USB-Stick). Dort in den Ordner Tools\Systemdiagnose\Rueckmeldungen legen - Claude liest sie dort und baut die Korrektur ein.")
+        $Script:BerichtDatei = $ziel
+        $Script:BerichtText = "$name liegt auf dem Desktop ($([math]::Max(1, [math]::Round((Get-Item -LiteralPath $ziel).Length / 1KB))) KB)"
+        $imAusgang = try { Add-RueckmeldungAusgang $json ([IO.Path]::GetFileNameWithoutExtension($name)) } catch { Write-Fehlerlog "Rückmeldung: Verschlüsseln fehlgeschlagen - $($_.Exception.Message)"; $false }
+        if (-not $imAusgang) {
+            Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$ziel`""
+            Show-Hinweis 'Bericht gespeichert' ("Was? $($Script:BerichtText).`n`nWas tun? Die Datei an PC 1 schicken (Google Drive, Mail oder USB-Stick). Dort in den Ordner Tools\Systemdiagnose\Rueckmeldungen legen - Claude liest sie dort und baut die Korrektur ein.")
+            return
+        }
+        Start-Rueckmeldungsversand -Rueckmeldung {
+            param($ok, $grund)
+            if ($ok) { Show-Hinweis 'Bericht gesendet' "Was? Der Bericht ist verschlüsselt an PC 1 übermittelt - nur dort lesbar. Eine Kopie: $($Script:BerichtText).`n`nWas tun? Nichts weiter." }
+            else {
+                Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$($Script:BerichtDatei)`""
+                Show-Hinweis 'Bericht noch nicht gesendet' "Was? Die Übermittlung an PC 1 klappte gerade nicht: $grund.`n`nWas tun? Nichts - die App schickt den Bericht beim nächsten Start von selbst nach. Eine Kopie: $($Script:BerichtText)."
+            }
+        }
     })
     if ($Vorschau) { return $d }
     [void]$d.ShowDialog()
@@ -4945,7 +5076,7 @@ foreach ($n in 'BefundListe', 'Detail', 'ReinigungScroll', 'ReinigungInfoScroll'
 $Script:NotenUhr = New-Object System.Windows.Threading.DispatcherTimer
 $Script:NotenUhr.Interval = [TimeSpan]::FromMinutes(1)
 $Script:NotenUhr.Add_Tick({ try { Update-Note } catch { } })
-$Script:Fenster.Add_ContentRendered({ $Script:NotenUhr.Start(); try { Show-ProfilHinweis; Start-AutoPruefung } catch { }; try { Start-UpdatePruefung } catch { } })
+$Script:Fenster.Add_ContentRendered({ $Script:NotenUhr.Start(); try { Show-ProfilHinweis; Start-AutoPruefung } catch { }; try { Start-UpdatePruefung } catch { }; try { Start-Rueckmeldungsversand; Start-RueckmeldungAbholen } catch { } })
 (Get-Element 'BereinigenKnopf').Add_Click({ Start-Bereinigung @(Get-AusgewaehlteLoesungen) 'Befunde' })
 (Get-Element 'ReinigenKnopf').Add_Click({ Start-Bereinigung @(Get-ReinigungsWahl) 'Reinigung' })
 (Get-Element 'AnalysierenKnopf').Add_Click({ Start-Analyse $(if (@($Script:Ausgefuehrt.Keys | Where-Object { $_ -like 'K:*' }).Count) { Get-Vorher }) })
